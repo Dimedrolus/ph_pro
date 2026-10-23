@@ -31,7 +31,7 @@ while True:
         try:
             requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                json={"chat_id": chat_id, "text": f"Мы тут приняло: {text}"}
+                json={"chat_id": chat_id, "text": f"Мне написали вот что: {text}"}
             )
         except requests.exceptions.RequestException as e:
             print(f"[сеть] sendMessage оборвался ({e.__class__.__name__}) — ответ мог потеряться, но бот жив")

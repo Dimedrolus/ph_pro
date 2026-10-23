@@ -1,7 +1,16 @@
 import requests
 import time
 
-TOKEN = "8871920722:AAEZ5HIbW9Gg-F1j_T6N0899oLaqe7Juv-k"
+
+import os
+from dotenv import load_data  # Загружает данные из файла .env
+
+load_data()
+# Теперь токен лежит в безопасности в переменной:
+TOKEN = os.getenv("BOT_TOKEN") 
+
+
+
 offset = 0
 
 print("Бот запущен и ждёт сообщения... (остановка: Ctrl+C)")

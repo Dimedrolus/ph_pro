@@ -1,0 +1,13 @@
+# Секретные ключи и настройки
+.env
+config.ini
+secrets.json
+
+# Папки виртуального окружения Python (если используете)
+venv/
+.venv/
+env/
+
+# Служебные файлы Windows и VSCodium
+Thumbs.db
+.vscode/

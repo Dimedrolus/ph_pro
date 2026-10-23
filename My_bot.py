@@ -3,9 +3,10 @@ import time
 
 
 import os
-from dotenv import load_data  # Загружает данные из файла .env
+from dotenv import load_dotenv  # Загружает данные из файла .env
 
-load_data()
+
+load_dotenv()
 # Теперь токен лежит в безопасности в переменной:
 TOKEN = os.getenv("BOT_TOKEN") 
 

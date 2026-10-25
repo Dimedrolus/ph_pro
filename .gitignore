@@ -3,11 +3,17 @@
 config.ini
 secrets.json
 
+# Файлы логирования
+.log
+
+
 # Папки виртуального окружения Python (если используете)
 venv/
 .venv/
 env/
 
+
 # Служебные файлы Windows и VSCodium
 Thumbs.db
 .vscode/
+

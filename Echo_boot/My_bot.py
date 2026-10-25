@@ -1,23 +1,46 @@
+import os
 import requests
 import time
+from datetime import datetime
+from dotenv import load_dotenv
 
-
-import os
-from dotenv import load_dotenv  # Загружает данные из файла .env
-
-
+# --- НАСТРОЙКИ БЕЗОПАСНОСТИ ---
+# Загружаем переменные из файла .env
 load_dotenv()
-# Теперь токен лежит в безопасности в переменной:
-TOKEN = os.getenv("BOT_TOKEN") 
+TOKEN = os.getenv("BOT_TOKEN")
 
+if not TOKEN:
+    raise ValueError("Ошибка: BOT_TOKEN не найден в файле .env. Проверь наличие файла и строки BOT_TOKEN=...")
 
-
+FILE_NAME = "subscribers.txt"
 offset = 0
 
-print("Бот запущен и ждёт сообщения... (остановка: Ctrl+C)")
+# --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ---
+def save_chat_id(chat_id):
+    """Проверяет наличие ID в файле и добавляет, если его нет."""
+    try:
+        # Читаем существующие ID
+        with open(FILE_NAME, "r", encoding="utf-8") as f:
+            ids = [line.strip() for line in f.readlines()]
+        
+        if str(chat_id) not in ids:
+            # Если ID новый — дописываем
+            with open(FILE_NAME, "a", encoding="utf-8") as f:
+                f.write(f"{chat_id}\n")
+            return True  # Новый подписчик
+        else:
+            return False # Уже есть в базе
+    except FileNotFoundError:
+        # Если файла ещё нет, создаём его и пишем первый ID
+        with open(FILE_NAME, "w", encoding="utf-8") as f:
+            f.write(f"{chat_id}\n")
+        return True
+
+print("Бот запущен. Жду команд... (/start, /help, /time)")
+print(f"Токен загружен успешно (длина {len(TOKEN)} символов).")
 
 while True:
-    # 1. Запрос входящих: сеть может оборваться — ловим и повторяем, offset НЕ трогаем
+    # 1. Опрос сервера Telegram (Long Polling)
     try:
         r = requests.get(
             f"https://api.telegram.org/bot{TOKEN}/getUpdates",
@@ -28,20 +51,50 @@ while True:
         time.sleep(3)
         continue
 
-    # 2. Разбор апдейтов
+    # 2. Обработка полученных сообщений
     for upd in r["result"]:
         offset = upd["update_id"] + 1
-        if "message" not in upd:
+        
+        msg = upd.get("message", {})
+        if "text" not in msg:
             continue
-        chat_id = upd["message"]["chat"]["id"]
-        text = upd["message"].get("text", "")
-        print(f"Входящее: chat_id={chat_id}, text={text!r}")
+            
+        chat_id = msg["chat"]["id"]
+        raw_text = msg["text"].strip()
+        text_lower = raw_text.lower() # Для проверки команд без учета регистра
+        
+        response_text = ""
+        
+        # --- ЛОГИКА КОМАНД ---
+        if text_lower == "/start":
+            is_new = save_chat_id(chat_id)
+            if is_new:
+                response_text = "👋 Привет! Я записал тебя в базу.\nТеперь могу присылать уведомления."
+            else:
+                response_text = "✅ Ты уже в базе. Всё работает."
+                
+        elif text_lower == "/help":
+            response_text = (
+                "Я умею:\n"
+                "/start - зарегистрироваться\n"
+                "/help - эта справка\n"
+                "/time - показать текущее время сервера\n\n"
+                "Любой другой текст я просто повторю."
+            )
+            
+        elif text_lower == "/time":
+            now = datetime.now().strftime("%H:%M:%S")
+            response_text = f"⏰ Сейчас на сервере: {now}"
+            
+        else:
+            # Эхо для всего остального
+            response_text = f"Эхо приняло: {raw_text}"
 
-        # 3. Отправка ответа: сеть может оборваться — ловим, бот остаётся жив
+        # 3. Отправка ответа пользователю
         try:
             requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                json={"chat_id": chat_id, "text": f"Мне написали вот что: {text}"}
+                json={"chat_id": chat_id, "text": response_text}
             )
         except requests.exceptions.RequestException as e:
-            print(f"[сеть] sendMessage оборвался ({e.__class__.__name__}) — ответ мог потеряться, но бот жив")
+            print(f"[сеть] sendMessage упал: {e}")

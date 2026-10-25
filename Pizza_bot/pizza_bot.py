@@ -17,12 +17,14 @@ from telegram.ext import (
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# =====================================================================
+# ВПИШИТЕ СЮДА ВАШ ТЕЛЕГРАМ ID (КОТОРЫЙ ВЫТАЩИЛИ СВОИМ БОТОМ)
+# =====================================================================
+ADMIN_ID = 5179402436  
+# =====================================================================
+
 # Этапы диалога (состояния для ConversationHandler)
 PHONE, CHILD_NAME, CHILD_AGE = range(3)
-
-# ID вашего Telegram-аккаунта (замените на свой числовой ID, чтобы только вы могли проводить розыгрыш!)
-# Узнать свой ID можно у бота @userinfobot
-ADMIN_ID = 5179402436  
 
 CSV_FILE = "participants.csv"
 
@@ -58,12 +60,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 async def get_phone(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Получаем телефон и спрашиваем имя ребенка"""
     contact = update.message.contact
-    # Сохраняем телефон в контекст пользователя, чтобы не потерять
     context.user_data['phone'] = contact.phone_number
 
     await update.message.reply_text(
         "Спасибо! Теперь напишите, пожалуйста, как зовут вашего ребенка:",
-        reply_markup=ReplyKeyboardRemove() # Убираем кнопку телефона
+        reply_markup=ReplyKeyboardRemove()
     )
     return CHILD_NAME
 
@@ -95,7 +96,6 @@ async def get_child_age(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         "Поздравляем! 🎉 Вы успешно зарегистрированы в розыгрыше пиццы.\n"
         "Когда розыгрыш завершится, бот пришлет вам уведомление в случае победы! 🍕"
     )
-    # Очищаем временные данные пользователя
     context.user_data.clear()
     return ConversationHandler.END
 
@@ -111,7 +111,7 @@ def is_user_registered(user_id: int) -> bool:
         return False
     with open(CSV_FILE, mode='r', encoding='utf-8') as f:
         reader = csv.reader(f)
-        next(reader, None) # Пропускаем заголовок
+        next(reader, None)
         for row in reader:
             if row and row[0] == str(user_id):
                 return True
@@ -120,31 +120,52 @@ def is_user_registered(user_id: int) -> bool:
 # --- ФУНКЦИИ АДМИНИСТРАТОРА (ОПРЕДЕЛЕНИЕ ПОБЕДИТЕЛЯ) ---
 
 async def draw_pizza(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Команда /draw для выбора случайного победителя (только для админа)"""
+    """Команда /draw для выбора победителя (случайно или конкретного по нику/ID)"""
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("У вас нет прав для проведения розыгрыша!")
         return
 
     participants = []
+    if not os.path.exists(CSV_FILE):
+        await update.message.reply_text("База участников пуста!")
+        return
+
     with open(CSV_FILE, mode='r', encoding='utf-8') as f:
         reader = csv.reader(f)
-        header = next(reader, None)
+        next(reader, None)  # Пропускаем заголовок
         for row in reader:
             if row:
                 participants.append(row)
 
     if not participants:
-        await update.message.reply_text("В розыгрыше пока никто не участвует. База пуста!")
+        await update.message.reply_text("В розыгрыше пока никто не участвует!")
         return
 
-    # Выбираем случайную строку из списка участников
-    winner = random.choice(participants)
+    winner = None
+
+    # Проверяем, передан ли конкретный ник или ID после команды /draw
+    if context.args:
+        target = " ".join(context.args).strip()
+        
+        # Ищем человека в базе по Юзернейму (row[1]) или по Telegram ID (row[0])
+        for p in participants:
+            if p[1].lower() == target.lower() or p[0] == target:
+                winner = p
+                break
+        
+        if not winner:
+            await update.message.reply_text(f"❌ Участник '{target}' не найден в базе!")
+            return
+    else:
+        # Если аргументов нет — чистый рандом
+        winner = random.choice(participants)
+
     winner_id = int(winner[0])
     winner_username = winner[1]
     winner_phone = winner[2]
     winner_child = winner[3]
 
-    # 1. Пишем админу, кто победил, со всеми картами
+    # Пишем админу, кто выиграл
     await update.message.reply_text(
         f"🎉 Розыгрыш проведен!\n\n"
         f"👑 ПОБЕДИТЕЛЬ:\n"
@@ -154,7 +175,7 @@ async def draw_pizza(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"Ребенок: {winner_child}"
     )
 
-    # 2. Автоматически отправляем сообщение самому победителю в ЛС!
+    # Отправляем сообщение победителю в ЛС
     try:
         await context.bot.send_message(
             chat_id=winner_id,
@@ -163,8 +184,7 @@ async def draw_pizza(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         await update.message.reply_text("🔔 Победитель успешно уведомлен ботом в личные сообщения!")
     except Exception as e:
-        await update.message.reply_text(f"⚠️ Не удалось автоматически уведомить победителя в ЛС (возможно, он заблокировал бота): {e}")
-
+        await update.message.reply_text(f"⚠️ Не удалось отправить уведомление в ЛС: {e}")
 
 def main() -> None:
     load_dotenv()
@@ -173,7 +193,7 @@ def main() -> None:
 
     application = Application.builder().token(token).build()
 
-    # Настраиваем пошаговый опрос (ConversationHandler)
+    # Пошаговый опрос
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler("start", start)],
         states={
@@ -185,8 +205,6 @@ def main() -> None:
     )
 
     application.add_handler(conv_handler)
-    
-    # Регистрируем секретную команду для админа
     application.add_handler(CommandHandler("draw", draw_pizza))
 
     logger.info("Бот для розыгрыша пиццы успешно запущен...")

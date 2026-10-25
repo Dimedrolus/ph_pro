@@ -90,11 +90,23 @@ while True:
             # Эхо для всего остального
             response_text = f"Эхо приняло: {raw_text}"
 
-        # 3. Отправка ответа пользователю
-        try:
-            requests.post(
-                f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                json={"chat_id": chat_id, "text": response_text}
-            )
-        except requests.exceptions.RequestException as e:
-            print(f"[сеть] sendMessage упал: {e}")
+     # 3. Отправка ответа пользователю (с попытками)
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                resp = requests.post(
+                    f"https://api.telegram.org/bot{TOKEN}/sendMessage",
+                    json={"chat_id": chat_id, "text": response_text},
+                    timeout=10  # Ждем максимум 10 секунд, не бесконечно
+                )
+                if resp.status_code == 200:
+                    break  # Успешно отправили, выходим из цикла повторов
+                else:
+                    print(f"[сеть] Ответ не доставлен (код {resp.status_code}), пробую еще...")
+                    
+            except requests.exceptions.RequestException as e:
+                print(f"[сеть] Попытка {attempt + 1}/{max_retries} сорвалась ({e.__class__.__name__})")
+                if attempt < max_retries - 1:
+                    time.sleep(2) # Пауза перед повтором
+                else:
+                    print("[!] Сообщение потеряно окончательно.")

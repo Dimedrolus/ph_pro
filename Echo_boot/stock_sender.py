@@ -1,13 +1,12 @@
 import os
 import sys
 import requests
-import json
 import time
 from datetime import datetime
 from dotenv import load_dotenv
 
 # ==========================================
-# 1. АРХИТЕКТУРА ПУТЕЙ (как в sender.py)
+# 1. АРХИТЕКТУРА ПУТЕЙ
 # ==========================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 BASE_DIR = os.path.dirname(SCRIPT_DIR)
@@ -33,6 +32,7 @@ def log(message, level="INFO"):
     print(formatted_msg)
     
     try:
+        # Ротация логов: если файл больше 1 МБ, архивируем старый
         if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > 1_000_000:
             archive_name = LOG_FILE.replace(".log", f"_old_{int(time.time())}.log")
             os.rename(LOG_FILE, archive_name)
@@ -59,10 +59,92 @@ if not TOKEN:
 log("--- ЗАПУСК STOCK_SENDER.PY ---")
 
 # ==========================================
-# 4. ЛОГИКА ПОЛУЧЕНИЯ ДАННЫХ С MOEX
+# 4. ПОЛУЧЕНИЕ ДАННЫХ С MOEX
 # ==========================================
 
+def get_gazp_data():
+    """
+    Получает данные GAZP за последние торговые дни.
+    Используем selectcolumns для явного указания полей, чтобы не зависеть от порядка колонок API.
+    Структура ответа с selectcolumns=DATE,CLOSE,VOLUME:
+    Index 0: DATE ('2026-10-24')
+    Index 1: CLOSE (114.75) <-- ЦЕНА ЗАКРЫТИЯ
+    Index 2: VOLUME (...)
+    """
+    
+    # Формируем URL с явным указанием дат и колонок
+    # from=2026-10-01 гарантирует свежие данные (сегодня 25 октября 2026)
+    url = ("https://iss.moex.com/iss/engines/stock/markets/shares/"
+           "boards/TQBR/securities/GAZP/candles.json?"
+           "interval=24&limit=5&from=2026-10-01&to=2026-10-25"
+           "&selectcolumns=DATE,CLOSE,VOLUME")
+    
+    try:
+        log("Запрос данных с MOEX...", "DEBUG")
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        
+        candles_raw = data.get('candles', {}).get('data', [])
+        
+        if not candles_raw:
+            log("MOEX вернул пустой список.", "WARN")
+            return None
+        
+        # Логируем первую и последнюю свечу целиком для диагностики
+        log(f"Сырая первая свеча: {candles_raw[0]}", "DEBUG")
+        log(f"Сырая последняя свеча: {candles_raw[-1]}", "DEBUG")
+        
+        # Берем ПОСЛЕДНЮЮ свечу (самая свежая дата)
+        latest_candle = candles_raw[-1]
+        
+        # Извлекаем Close (индекс 1 благодаря selectcolumns)
+        try:
+            current_price = float(latest_candle[1]) 
+            current_date = str(latest_candle[0])    
+        except (IndexError, ValueError, TypeError):
+            log("Не удалось извлечь цену Close (индекс 1). Проверьте структуру API.", "ERROR")
+            return None
 
+        # Предыдущая свеча для сравнения
+        prev_candle = candles_raw[-2] if len(candles_raw) > 1 else latest_candle
+        try:
+            prev_price = float(prev_candle[1]) 
+        except:
+            prev_price = current_price 
+
+        change_pct = ((current_price - prev_price) / prev_price) * 100 if prev_price != 0 else 0
+        
+        return {
+            'current': current_price,
+            'prev': prev_price,
+            'change_pct': change_pct,
+            'date': current_date 
+        }
+
+    except Exception as e:
+        log(f"Ошибка при получении данных MOEX: {e}", "ERROR")
+        return None
+
+def format_message(stock_data):
+    """Формирует простой текстовый отчет."""
+    if not stock_data:
+        return "❌ Не удалось получить данные о Газпроме."
+    
+    price = stock_data['current']
+    pct = stock_data['change_pct']
+    date_str = stock_data.get('date', 'нет даты')
+    
+    trend_icon = "📈" if pct >= 0 else "📉"
+    sign = "+" if pct >= 0 else ""
+    
+    message = (
+        f"{trend_icon} ГАЗПРОМ (GAZP)\n\n"
+        f"💰 Цена закрытия ({date_str}): {price:.2f} ₽\n"
+        f"🔄 Изменение: {sign}{pct:.2f}%\n\n"
+        f"(Источник: Мосбиржа)"
+    )
+    return message
 
 # ==========================================
 # 5. РАССЫЛКА
@@ -83,25 +165,20 @@ def send_stock_report():
         log("Нет подписчиков.", "WARN")
         return
 
-    log(f"Отправка отчета по акциям для {len(chat_ids)} пользователей...", "INFO")
+    log(f"Отправка отчета для {len(chat_ids)} пользователей...", "INFO")
     
     success_count = 0
     fail_count = 0
     
-    # ВАЖНО: Убираем reply_markup для теста
-    payload = {
-        "chat_id": None, 
-        "text": text
-    }
-
     for cid_str in chat_ids:
         try:
             cid = int(cid_str)
-            payload["chat_id"] = cid
-            
             resp = requests.post(
                 f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-                json=payload,
+                json={
+                    "chat_id": cid, 
+                    "text": text
+                },
                 timeout=10  
             )
             
@@ -110,20 +187,19 @@ def send_stock_report():
                 log(f"[OK] Доставлено {cid}", "DEBUG")
             else:
                 fail_count += 1
-                # Выводим ПОЛНУЮ ошибку, чтобы понять причину
-                error_msg = resp.text
-                log(f"[FAIL] Ошибка API для {cid}: {error_msg}", "ERROR") 
+                log(f"[FAIL] Ошибка API: {resp.text}", "ERROR") 
                 
         except ValueError:
             fail_count += 1
             log(f"Некорректный ID: '{cid_str}'", "ERROR")
         except requests.exceptions.RequestException as e:
             fail_count += 1
-            log(f"Сетевая ошибка для {cid}: {e.__class__.__name__}", "WARN")
+            log(f"Сетевая ошибка: {e.__class__.__name__}", "WARN")
             
         time.sleep(0.5) 
 
     log(f"Готово. Успех: {success_count}, Ошибок: {fail_count}", "INFO")
+
 # ==========================================
 # 6. ТОЧКА ВХОДА
 # ==========================================

@@ -4,16 +4,16 @@ config.ini
 secrets.json
 
 # Файлы логирования
-.log
+*.log
+logs/
 
-
-# Папки виртуального окружения Python (если используете)
+# Папки виртуального окружения Python
 venv/
 .venv/
 env/
 
-
 # Служебные файлы Windows и VSCodium
 Thumbs.db
 .vscode/
-
+__pycache__/
+*.pyc

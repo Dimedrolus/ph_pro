@@ -62,68 +62,7 @@ log("--- ЗАПУСК STOCK_SENDER.PY ---")
 # 4. ЛОГИКА ПОЛУЧЕНИЯ ДАННЫХ С MOEX
 # ==========================================
 
-def get_gazp_data():
-    """
-    Получает последние 5 дневных свечей по акции GAZP с Мосбиржи.
-    Возвращает словарь с данными или None при ошибке.
-    """
-    url = ("https://iss.moex.com/iss/engines/stock/markets/shares/"
-           "boards/TQBR/securities/GAZP/candles.json?interval=24&limit=5")
-    
-    try:
-        log("Запрос данных с MOEX...", "DEBUG")
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        
-        # Проверяем структуру ответа
-        candles_raw = data.get('candles', {}).get('data', [])
-        
-        if not candles_raw:
-            log("MOEX вернул пустой список свечей.", "WARN")
-            return None
-            
-        # Берем самую свежую свечу (обычно первая в списке для interval=24, но проверим индексацию)
-        # В API MOEX данные идут в порядке [open, close, high, low, volume...]
-        # Индекс 1 - это Close
-        
-        # Просто возьмем первую попавшуюся свежую цену для теста
-        latest_candle = candles_raw[0] 
-        current_price = float(latest_candle[1]) # Close price
-        
-        # Для примера возьмем вторую как предыдущую, если есть
-        prev_price = float(candles_raw[1][1]) if len(candles_raw) > 1 else current_price
-        
-        change_pct = ((current_price - prev_price) / prev_price) * 100 if prev_price != 0 else 0
-        
-        return {
-            'current': current_price,
-            'change_pct': change_pct
-        }
 
-    except Exception as e:
-        log(f"Ошибка при получении данных MOEX: {e}", "ERROR")
-        return None
-
-def format_message(stock_data):
-    """Формирует КРАТКИЙ текст сообщения."""
-    if not stock_data:
-        return "❌ Не удалось получить данные о Газпроме."
-    
-    price = stock_data['current']
-    pct = stock_data['change_pct']
-    
-    trend_icon = "📈" if pct >= 0 else "📉"
-    sign = "+" if pct >= 0 else ""
-    
-    # Максимально короткий текст
-    message = (
-        f"{trend_icon} ГАЗПРОМ (GAZP)\n\n"
-        f"💰 Цена: {price:.2f} ₽\n"
-        f"🔄 Изм.: {sign}{pct:.2f}%\n\n"
-        f"(Тестовое сообщение)"
-    )
-    return message
 
 # ==========================================
 # 5. РАССЫЛКА
